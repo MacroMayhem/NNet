@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 import os
 import numpy as np
+import enum
 import torchvision.models as models
 from pathlib import Path
 from utils import get_train_loader, get_test_loader, save_setting, plot_norm_losses
@@ -24,6 +25,13 @@ SETTINGS = {
     'K_SHOT': 5
 }
 
+
+class MODE(enum.Enum):
+    SUPER_DEBUG = 0
+    DEBUG = 1
+    NORMAL = 2
+
+mode = MODE.SUPER_DEBUG
 
 def main():
 
@@ -48,7 +56,7 @@ def main():
     norm_triangle_loss = norm_triangle
     optimizer = optim.SGD(params=net.parameters(), lr=SETTINGS['LEARNING_RATE'], momentum=0.9, weight_decay=5e-4)
 
-    zero_img = torch.zeros(size=[1, 1, 28, 28])
+    zero_img = torch.zeros(size=[1, 28, 28])
     zero_label = torch.zeros(size=[1, 512])
 
     for iteration, training_sequence in enumerate(training_batches):
@@ -61,8 +69,9 @@ def main():
         total_loss_t = 0.0
         for batch_idx, data in enumerate(training_loader):
             x, y, alpha, x2, y2 = data
-            print('---INPUT SHAPES---')
-            print(x.shape, y.shape, alpha.shape, x2.shape, y2.shape)
+            if mode == MODE.SUPER_DEBUG:
+                print('---INPUT SHAPES---')
+                print(x.shape, y.shape, alpha.shape, x2.shape, y2.shape)
 
             net.eval()
             with torch.no_grad():
@@ -70,8 +79,9 @@ def main():
                 _, x2_features = net(x2.cuda())
                 _, alpha_x_features = net((x*alpha).cuda())
                 _, add_x_features = net((x+x2).cuda())
-            print('---OUTPUT SHAPES---')
-            print(x_features.shape, x2_features.shape, alpha_x_features.shape, add_x_features.shape)
+            if mode == MODE.SUPER_DEBUG:
+                print('---OUTPUT SHAPES---')
+                print(x_features.shape, x2_features.shape, alpha_x_features.shape, add_x_features.shape)
 
             net.train()
             net.zero_grad()
