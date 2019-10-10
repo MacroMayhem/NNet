@@ -11,18 +11,19 @@ from torch.utils.data.sampler import SubsetRandomSampler
 import json
 import matplotlib.pyplot as plt
 import seaborn as sns
+import umap
 
 
-def get_network(args, num_classes, use_gpu=True):
+def get_network(net, num_classes, input_channels=3, use_gpu=True):
     """ return given network
     """
-    if args.net == 'vgg11':
+    if net == 'vgg11':
         from models.vgg import vgg11_bn
         net = vgg11_bn()
-    elif args.net == 'resnet18':
+    elif net == 'resnet18':
         from models.resnet import resnet18
-        net = resnet18(num_classes=num_classes)
-    elif args.net == 'mobilenetv2':
+        net = resnet18(num_classes=num_classes, input_channels=input_channels)
+    elif net == 'mobilenetv2':
         from models.mobilenetv2 import mobilenetv2
         net = mobilenetv2()
 
@@ -88,19 +89,29 @@ class MNISTSubDataset(torchvision.datasets.MNIST):
         return len(self.targets)
 
     def __getitem__(self, index):
-        y = self.targets[index]
-        x = self.data[index]
-        random_index = np.random.randint(0, len(self.targets), 1)
-        random_x = self.data[random_index[0]]
-        random_y = self.targets[random_index[0]]
-        random_scale = np.random.uniform(-self.norm_lambda, self.norm_lambda, 1)
+        x, y = self.data[index], self.targets[index]
 
-        return x, y, random_scale, random_x, random_y #I1, Y1, A, I2, Y2
+        x = Image.fromarray(x.numpy(), mode='L')
+        if self.transform is not None:
+            x = self.transform(x)
+
+        random_index = np.random.randint(0, len(self.targets), 1)
+        x2, y2 = self.data[random_index[0]], self.targets[random_index[0]]
+        x2 = Image.fromarray(x2.numpy(), mode='L')
+        if self.transform is not None:
+            x2 = self.transform(x2)
+
+        random_scale = np.random.uniform(0, self.norm_lambda, 1)[0]
+        alpha_x = x * random_scale
+        alpha_y = y * random_scale
+
+        return x, y, torch.as_tensor(random_scale), x2, y2, alpha_x, alpha_y #I1, Y1, A, I2, Y2, I3, Y3
+
 
 class CIFAR100SubDataset(torchvision.datasets.CIFAR100):
-    def __init__(self, *args, include_list=[], **kwargs):
+    def __init__(self, *args, include_list=[], norm_lambda=1.0, **kwargs):
         super(CIFAR100SubDataset, self).__init__(*args, **kwargs)
-        self.norm_lambda = kwargs.get('norm_lambda', 1.0)
+        self.norm_lambda = norm_lambda
 
         labels = np.array(self.targets)
         include = np.array(include_list).reshape(1, -1)
@@ -113,32 +124,50 @@ class CIFAR100SubDataset(torchvision.datasets.CIFAR100):
         return len(self.targets)
 
     def __getitem__(self, index):
-        y = self.targets[index]
-        x = self.data[index]
+        x, y = self.data[index], self.targets[index]
+
+        x = Image.fromarray(x)
+        if self.transform is not None:
+            x = self.transform(x)
+
         random_index = np.random.randint(0, len(self.targets), 1)
-        random_x = self.data[random_index]
-        random_y = self.targets[random_index]
-        random_scale = np.random.uniform(-self.norm, self.norm, 1)
+        x2, y2 = self.data[random_index[0]], self.targets[random_index[0]]
+        x2 = Image.fromarray(x2)
+        if self.transform is not None:
+            x2 = self.transform(x2)
 
-        return x, y, random_scale*x, random_scale*y, x+random_x, (y, random_y) #I1, Y1, L*I1, L*Y1, (I1+I2), (Y1+Y2)
+        random_scale = np.random.uniform(0, self.norm_lambda, 1)[0]
+        alpha_x = x * random_scale
+        alpha_y = y * random_scale
 
+        return x, y, torch.as_tensor(random_scale), x2, y2, alpha_x, alpha_y #I1, Y1, A, I2, Y2, I3, Y3
 
 def save_setting(setting, path):
     with open(path+'/setting.json', 'w') as f:
         json.dump(setting, f, indent=4)
 
 
-def plot_norm_losses(l_a, l_t, l_z, path):
-    xticks = ('Alpha', 'Triangle', 'ZERO')
-    y = [l_a, l_t, l_z]
+def plot_norm_losses(l_a, l_t, l_z, l_p, path, fid):
+    xticks = ('Alpha', 'Triangle', 'ZERO', 'Positive')
+    y = [l_a, l_t, l_z, l_p]
     sns.set_context(rc={"figure.figsize": (8, 4)})
-    nd = np.arange(3)
+    nd = np.arange(4)
     width = 0.8
     plt.xticks(nd + width / 2., xticks)
-    plt.xlim(-0.15, 3)
-    fig = plt.bar(nd, y, color=sns.color_palette("Blues", 3))
-    plt.show()
-    if not os.path.exists(path):
-        os.makedirs(path)
-    plt.savefig(path+'/norm_losses.png')
+    plt.xlim(-0.15, 4)
+    fig = plt.bar(nd, y, color=sns.color_palette("Blues", 4))
+    #plt.show()
+    plt.savefig(path+'/norm_losses--{}.png'.format(fid))
+    plt.close()
+
+
+def plot_embedding(data, labels, filepath, filename, num_classes, cmap='Spectral', s=5):
+    reducer = umap.UMAP(random_state=42)
+    reducer.fit(data)
+    embedding = reducer.transform(data)
+    plt.scatter(embedding[:, 0], embedding[:, 1], c=labels, cmap=cmap, s=s)
+    plt.gca().set_aspect('equal', 'datalim')
+    plt.colorbar(boundaries=np.arange(num_classes+1) - 0.5).set_ticks(np.arange(num_classes))
+    plt.title('UMAP projection', fontsize=24)
+    plt.savefig(filepath+'/{}.png'.format(filename))
     plt.close()

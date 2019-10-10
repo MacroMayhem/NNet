@@ -77,13 +77,13 @@ class BottleNeck(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, num_block, num_classes=100):
+    def __init__(self, block, num_block, num_classes=100, input_channels=3, output_channels=1):
         super().__init__()
 
         self.in_channels = 64
 
         self.conv1 = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, padding=1, bias=False),
+            nn.Conv2d(input_channels, 64, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True))
         # we use a different inputsize than the original paper
@@ -93,7 +93,7 @@ class ResNet(nn.Module):
         self.conv4_x = self._make_layer(block, 256, num_block[2], 2)
         self.conv5_x = self._make_layer(block, 512, num_block[3], 2)
         self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.fc = nn.Linear(512 * block.expansion, output_channels)
 
     def _make_layer(self, block, out_channels, num_blocks, stride):
         """make resnet layers(by layer i didnt mean this 'layer' was the
@@ -132,10 +132,10 @@ class ResNet(nn.Module):
         return output, flat_features
 
 
-def resnet18(num_classes):
+def resnet18(num_classes, input_channels):
     """ return a ResNet 18 object
     """
-    return ResNet(BasicBlock, [2, 2, 2, 2], num_classes=num_classes)
+    return ResNet(BasicBlock, [2, 2, 2, 2], num_classes=num_classes, input_channels=input_channels)
 
 
 def resnet34():
