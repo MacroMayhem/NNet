@@ -52,7 +52,7 @@ def main():
 
     norm_alpha_loss = torch.nn.L1Loss()
     norm_triangle_loss = norm_triangle
-    optimizer = optim.Adam(params=net.parameters(), lr=SETTINGS['LEARNING_RATE'])
+    optimizer = optim.SGD(params=net.parameters(), lr=SETTINGS['LEARNING_RATE'], momentum=0.9)
 
     zero_img = torch.zeros(size=[1, 1, 28, 28])
     zero_label = torch.zeros(size=[1, 1])
@@ -86,7 +86,7 @@ def main():
 
                 l_t = norm_triangle_loss(n_x, n_x_add_x2, n_x2)
                 l_p = pos_loss(n_x)
-                agg_loss = l_t+l_p
+                agg_loss = l_a+l_t+l_p
                 agg_loss.backward()
                 optimizer.step()
 
@@ -95,7 +95,7 @@ def main():
                 l_z = zero_loss(n_zero)/SETTINGS['BATCH_SIZE']
                 l_z.backward()
                 optimizer.step()
-                plot_norm_losses(0, l_t.item(), l_z.item(), l_p.item()
+                plot_norm_losses(l_a.item(), l_t.item(), l_z.item(), l_p.item()
                                  , path=os.path.join(checkpoint_path, 'LossPlots', str(iteration))
                                  , fid='Epoch:{}--BatchNo:{}'.format(epoch, batch_idx))
 
@@ -111,6 +111,8 @@ def main():
 
             plot_norm_losses(l_a.item(), l_t.item(), l_z.item(), l_p.item(), path=os.path.join(checkpoint_path, 'LossPlots',
                                                                             str(iteration)), fid='Epoch:{}--END'.format(epoch))
+            torch.save(net.state_dict(),
+                       model_ckp_path.format(net=SETTINGS['net'], idx=iteration, epoch=epoch, type='end'))
         break
 
 

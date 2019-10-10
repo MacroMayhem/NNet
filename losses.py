@@ -3,18 +3,18 @@ import torch
 
 def norm_triangle(x, add_x, x2):
     violations = torch.sub(add_x-x2, x)
-    violations[violations < 0] = 0.000001
+    # violations[violations < 0] = 0
     return torch.mean(violations)
 
 
 def zero_loss(fx):
-    if torch.abs(fx - 0.0) < 0.00001 :
-        return 0.0
+    if torch.abs(fx - 0.0) < 0.01 :
+        return fx-fx
     else:
         return torch.abs(fx)
 
 
 def pos_loss(x):
     violations = x
-    violations[x > 0] = 0.000001
+    # violations[x > 0] = 0
     return -torch.mean(violations)
