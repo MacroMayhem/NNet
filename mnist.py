@@ -6,22 +6,23 @@ import os
 import numpy as np
 import enum
 from pathlib import Path
-from utils import get_train_loader, get_test_loader, save_setting, plot_norm_losses, get_network, plot_embedding
-from losses import norm_triangle, pos_loss, zero_loss
+from utils import get_train_loader, get_test_loader, save_setting, plot_norm_losses, get_network, plot_embedding, plot_gradients
+from losses import norm_triangle, zero_loss
 
 SETTINGS = {
     'CHECKPOINT_ROOT': './checkpoint',
-    'EPOCH': 100,
+    'EPOCH': 2,
     'TIME_NOW': str(datetime.now().isoformat()),
     'SAVE_EVERY': 1,
     'BATCH_SIZE': 128,
-    'LEARNING_RATE': 0.00001,
-    'NET': 'resnet18',
+    'LEARNING_RATE': 0.0001,
+    'NET': 'resnet18_modx',
     'DATASET': 'mnist',
-    'STEP_CLASSES': 10,
+    'STEP_CLASSES': 2,
     'NUM_CLASSES': 10,
-    'NORM_LAMBDA': 10,
-    'K_SHOT': 5
+    'NORM_LAMBDA': 1,
+    'K_SHOT': 5,
+    'LOSSES':['CE']
 }
 
 
@@ -30,7 +31,9 @@ class MODE(enum.Enum):
     DEBUG = 1
     NORMAL = 2
 
+
 mode = MODE.DEBUG
+
 
 def main():
 
@@ -45,58 +48,106 @@ def main():
     model_ckp_path = os.path.join(checkpoint_path, '{net}-{idx}-{epoch}-{type}.pth')
     save_setting(SETTINGS, checkpoint_path)
 
-    if SETTINGS['NET'] == 'resnet18':
-        net = get_network(net=SETTINGS['NET'], num_classes=SETTINGS['NUM_CLASSES'], input_channels=1)
-    else:
-        raise NotImplementedError('{} currently not supported!'.format(SETTINGS['NET']))
+    net = get_network(net=SETTINGS['NET'], num_classes=SETTINGS['STEP_CLASSES'], input_channels=1)
 
-    norm_alpha_loss = torch.nn.L1Loss()
-    norm_triangle_loss = norm_triangle
-    optimizer = optim.SGD(params=net.parameters(), lr=SETTINGS['LEARNING_RATE'], momentum=0.9)
-
+    norm_alpha_loss = torch.nn.MSELoss()
+    norm_triangle_loss = torch.nn.MSELoss()
+    ce_criterion = torch.nn.CrossEntropyLoss()
+    ce_optimizer = optim.SGD(params=net.parameters(), lr=SETTINGS['LEARNING_RATE'], momentum=0.9)
+    triangle_optimizer = optim.SGD(params=net.parameters(), lr=SETTINGS['LEARNING_RATE'], momentum=0.9)
+    zero_optimizer = optim.SGD(params=net.parameters(), lr=SETTINGS['LEARNING_RATE'], momentum=0.9)
     zero_img = torch.zeros(size=[1, 1, 28, 28])
-    zero_label = torch.zeros(size=[1, 1])
+    zero_label = torch.zeros(size=[1, 512])
+
+    old_classes = []
 
     for iteration, training_sequence in enumerate(training_batches):
         if not os.path.exists(os.path.join(checkpoint_path, 'Plots', str(iteration))):
-            Path(os.path.join(checkpoint_path, 'LossPlots', str(iteration))).mkdir(parents=True, exist_ok=True)
-            Path(os.path.join(checkpoint_path, 'EmbeddingPlots', str(iteration))).mkdir(parents=True, exist_ok=True)
+            base_path = os.path.join(checkpoint_path, 'Plots', str(iteration))
+            base_gradients_path = os.path.join(base_path, 'Gradients')
+            g_zero_path = os.path.join(base_gradients_path, 'L_Zero')
+            g_alpha_path = os.path.join(base_gradients_path, 'L_Alpha')
+            g_triangle_path = os.path.join(base_gradients_path, 'L_Triangle')
+            loss_path = os.path.join(base_path, 'LossPlots')
+            embedding_path = os.path.join(base_path, 'EmbeddingPlots')
+            Path(loss_path).mkdir(parents=True, exist_ok=True)
+            Path(embedding_path).mkdir(parents=True, exist_ok=True)
+            Path(g_zero_path).mkdir(parents=True, exist_ok=True)
+            Path(g_alpha_path).mkdir(parents=True, exist_ok=True)
+            Path(g_triangle_path).mkdir(parents=True, exist_ok=True)
 
         training_loader = get_train_loader(SETTINGS['DATASET'], accepted_class_labels=training_sequence, norm_lambda=SETTINGS['NORM_LAMBDA'], batch_size=SETTINGS['BATCH_SIZE'])
-        test_loader = get_test_loader(SETTINGS['DATASET'], accepted_class_labels=training_sequence, batch_size=5*SETTINGS['BATCH_SIZE'])
+        old_classes.extend(training_sequence)
+        test_loader = get_test_loader(SETTINGS['DATASET'], accepted_class_labels=old_classes, batch_size=5*SETTINGS['BATCH_SIZE'])
         for epoch in range(SETTINGS['EPOCH']):
             print('Processing iteration: {}\nEpoch:{}'.format(iteration, epoch))
             for batch_idx, data in enumerate(training_loader):
-                x, y, alpha, x2, y2, x_alpha, y_alpha = data
+                x, y, alpha, x2, y2, x_alpha, x_convex = data
+                y = y - iteration*len(training_sequence)
+
                 if mode == MODE.SUPER_DEBUG:
                     print('---INPUT SHAPES---')
-                    print(x.shape, y.shape, alpha.shape, x2.shape, y2.shape, x_alpha.shape, y_alpha.shape)
+                    print(x.shape, y.shape, alpha.shape, x2.shape, y2.shape, x_alpha.shape, x_convex.shape)
 
                 net.eval()
                 with torch.no_grad():
-                    #_, _ = net(x.cuda())
-                    n_x2, _ = net(x2.cuda())
-                    n_x_alpha, _ = net(x_alpha.cuda())
-                    n_x_add_x2, _ = net((x+x2).cuda())
+                    _, x2_features = net(x2.cuda())
+                    _, alpha_x_features = net(x_alpha.cuda())
 
-                net.train()
+                alpha_sq = torch.unsqueeze(alpha, dim=1)
+                if 'CE' in SETTINGS['LOSSES']:
+                    net.train()
+                    net.zero_grad()
+                    preds, x_features = net(x.cuda())
+                    l_ce = ce_criterion(preds, y.cuda())
+                    l_ce.backward(retain_graph=True)
+                    ce_gradients = get_gradient_magnitudes(net)
+                    plot_gradients(ce_gradients, g_alpha_path, '{}--{}'.format(epoch, batch_idx))
+                    del ce_gradients
+                    ce_optimizer.step()
+                else:
+                    l_ce = DummyLoss()
+
+                """net.train()
                 net.zero_grad()
-                n_x, _ = net(x.cuda())
-                l_a = norm_alpha_loss(n_x*torch.unsqueeze(alpha, dim=1).cuda(), n_x_alpha)
+                _, x_features = net(x.cuda())
+                x_norm = torch.unsqueeze(torch.norm(x_features, p=2, dim=1), dim=1)
+                alpha_sq = torch.unsqueeze(alpha, dim=1)
+                alpha_x_norm = torch.unsqueeze(torch.norm(alpha_x_features, p=2, dim=1), dim=1)
+                # print(alpha_sq.shape, x_norm.shape, alpha_x_norm.shape)
+                l_a = norm_alpha_loss(x_norm*alpha_sq.cuda(), alpha_x_norm)
+                l_a.backward(retain_graph=True)
+                alpha_gradients = get_gradient_magnitudes(net)
+                plot_gradients(alpha_gradients, g_alpha_path, '{}--{}'.format(epoch, batch_idx))
+                del alpha_gradients
+                ce_optimizer.step()"""
 
-                l_t = norm_triangle_loss(n_x, n_x_add_x2, n_x2)
-                l_p = pos_loss(n_x)
-                agg_loss = l_a+l_t+l_p
-                agg_loss.backward()
-                optimizer.step()
+                if 'TRIANGLE' in SETTINGS['LOSSES']:
+                    net.train()
+                    net.zero_grad()
+                    _, cvx_features = net(x_convex.cuda())
+                    l_t = norm_triangle_loss(torch.log(torch.unsqueeze(torch.norm(cvx_features, p=2, dim=1), dim=1))
+                         , torch.log(alpha_sq.cuda() * torch.unsqueeze(torch.norm(x_features, p=2, dim=1), dim=1)
+                         + (1 - alpha_sq.cuda()) * torch.unsqueeze(torch.norm(x2_features, p=2, dim=1), dim=1)))
+                    l_t.backward()
+                    triangle_gradients = get_gradient_magnitudes(net)
+                    plot_gradients(triangle_gradients, g_triangle_path, '{}--{}'.format(epoch, batch_idx))
+                    del triangle_gradients
+                    triangle_optimizer.step()
+                else:
+                    l_t = DummyLoss()
 
-                net.zero_grad()
-                n_zero, _ = net(zero_img.cuda())
-                l_z = zero_loss(n_zero)/SETTINGS['BATCH_SIZE']
+
+                """net.zero_grad()
+                _, zero_features = net(zero_img.cuda())
+                l_z = zero_loss(zero_features)/SETTINGS['BATCH_SIZE']
                 l_z.backward()
-                optimizer.step()
-                plot_norm_losses(l_a.item(), l_t.item(), l_z.item(), l_p.item()
-                                 , path=os.path.join(checkpoint_path, 'LossPlots', str(iteration))
+                zero_gradients = get_gradient_magnitudes(net)
+                plot_gradients(zero_gradients, g_zero_path, '{}--{}'.format(epoch, batch_idx))
+                del zero_gradients
+                zero_optimizer.step()"""
+                plot_norm_losses(l_ce.item(), l_t.item(), 0
+                                 , path=loss_path
                                  , fid='Epoch:{}--BatchNo:{}'.format(epoch, batch_idx))
 
                 for data in test_loader:
@@ -105,16 +156,29 @@ def main():
                 net.eval()
                 with torch.no_grad():
                     _, x_test_features = net(x_test.cuda())
-                plot_embedding(x_test_features.cpu().numpy(), y_test.cpu().numpy(), num_classes=SETTINGS['STEP_CLASSES']
-                               , filepath=os.path.join(checkpoint_path, 'EmbeddingPlots', str(iteration))
+                plot_embedding(x_test_features.cpu().numpy(), y_test.cpu().numpy(), num_classes=len(old_classes)
+                               , filepath=embedding_path
                                , filename='Epoch:{}--BatchNo:{}'.format(epoch, batch_idx))
-
-            plot_norm_losses(l_a.item(), l_t.item(), l_z.item(), l_p.item(), path=os.path.join(checkpoint_path, 'LossPlots',
-                                                                            str(iteration)), fid='Epoch:{}--END'.format(epoch))
+            plot_norm_losses(l_ce.item(), l_t.item(), 0, path=loss_path, fid='Epoch:{}--END'.format(epoch))
             torch.save(net.state_dict(),
-                       model_ckp_path.format(net=SETTINGS['net'], idx=iteration, epoch=epoch, type='end'))
-        break
+                       model_ckp_path.format(net=SETTINGS['NET'], idx=iteration, epoch=epoch, type='end'))
 
+
+def get_gradient_magnitudes(net):
+    gradient_magnitudes = []
+    for name, parameter in net.named_parameters():
+        try:
+            gradient_magnitudes.append(parameter.grad.norm(2).item() ** 2)
+        except:
+            continue
+    return gradient_magnitudes
+
+
+class DummyLoss:
+    def __init__(self):
+        self.val = 0.0
+    def item(self):
+        return self.val
 
 if __name__ == '__main__':
     main()

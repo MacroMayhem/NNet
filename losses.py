@@ -1,20 +1,10 @@
 import torch
 
 
-def norm_triangle(x, add_x, x2):
-    violations = torch.sub(add_x-x2, x)
-    # violations[violations < 0] = 0
-    return torch.mean(violations)
+def norm_triangle(x, x2, x3, l):
+    loss = torch.nn.MSELoss()
+    return
 
 
 def zero_loss(fx):
-    if torch.abs(fx - 0.0) < 0.01 :
-        return fx-fx
-    else:
-        return torch.abs(fx)
-
-
-def pos_loss(x):
-    violations = x
-    # violations[x > 0] = 0
-    return -torch.mean(violations)
+    return torch.mean(torch.abs(fx))

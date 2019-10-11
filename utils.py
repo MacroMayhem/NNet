@@ -26,7 +26,9 @@ def get_network(net, num_classes, input_channels=3, use_gpu=True):
     elif net == 'mobilenetv2':
         from models.mobilenetv2 import mobilenetv2
         net = mobilenetv2()
-
+    elif net == 'resnet18_modx':
+        from models.resnet_modx import resnet18
+        net = resnet18(num_classes=num_classes, input_channels=input_channels)
     else:
         print('the network name you have entered is not supported yet')
         sys.exit()
@@ -101,11 +103,12 @@ class MNISTSubDataset(torchvision.datasets.MNIST):
         if self.transform is not None:
             x2 = self.transform(x2)
 
-        random_scale = np.random.uniform(0, self.norm_lambda, 1)[0]
+        random_scale = np.random.uniform(0, 1, 1)[0]
         alpha_x = x * random_scale
-        alpha_y = y * random_scale
 
-        return x, y, torch.as_tensor(random_scale), x2, y2, alpha_x, alpha_y #I1, Y1, A, I2, Y2, I3, Y3
+        convex_x = random_scale*x + (1-random_scale)*x2
+
+        return x, y, torch.abs(torch.as_tensor(random_scale)), x2, y2, alpha_x, convex_x #I1, Y1, A, I2, Y2, I3, Y3
 
 
 class CIFAR100SubDataset(torchvision.datasets.CIFAR100):
@@ -136,26 +139,28 @@ class CIFAR100SubDataset(torchvision.datasets.CIFAR100):
         if self.transform is not None:
             x2 = self.transform(x2)
 
-        random_scale = np.random.uniform(0, self.norm_lambda, 1)[0]
+        random_scale = np.random.uniform(0, 1, 1)[0]
         alpha_x = x * random_scale
-        alpha_y = y * random_scale
 
-        return x, y, torch.as_tensor(random_scale), x2, y2, alpha_x, alpha_y #I1, Y1, A, I2, Y2, I3, Y3
+        convex_x = random_scale * x + (1 - random_scale) * x2
+
+        return x, y, torch.abs(torch.as_tensor(random_scale)), x2, y2, alpha_x, convex_x  # I1, Y1, A, I2, Y2, I3, Y3
+
 
 def save_setting(setting, path):
     with open(path+'/setting.json', 'w') as f:
         json.dump(setting, f, indent=4)
 
 
-def plot_norm_losses(l_a, l_t, l_z, l_p, path, fid):
+def plot_norm_losses(l_a, l_t, l_z, path, fid):
     xticks = ('Alpha', 'Triangle', 'ZERO', 'Positive')
-    y = [l_a, l_t, l_z, l_p]
+    y = [l_a, l_t, l_z]
     sns.set_context(rc={"figure.figsize": (8, 4)})
-    nd = np.arange(4)
+    nd = np.arange(3)
     width = 0.8
-    plt.xticks(nd + width / 2., xticks)
-    plt.xlim(-0.15, 4)
-    fig = plt.bar(nd, y, color=sns.color_palette("Blues", 4))
+    plt.xticks(nd + width/4.0, xticks)
+    plt.xlim(-0.15, 3)
+    fig = plt.bar(nd, y, color=sns.color_palette("Blues", 3))
     #plt.show()
     plt.savefig(path+'/norm_losses--{}.png'.format(fid))
     plt.close()
@@ -170,4 +175,12 @@ def plot_embedding(data, labels, filepath, filename, num_classes, cmap='Spectral
     plt.colorbar(boundaries=np.arange(num_classes+1) - 0.5).set_ticks(np.arange(num_classes))
     plt.title('UMAP projection', fontsize=24)
     plt.savefig(filepath+'/{}.png'.format(filename))
+    plt.close()
+
+
+def plot_gradients(magnitudes, ckp_path, filename):
+    f, axes = plt.subplots(1, 1, figsize=(20, 20))
+    y = np.asarray(magnitudes)
+    sns.boxplot(x=np.asarray(range(y.shape[0])), y=y, palette=sns.color_palette("bright", len(magnitudes)))
+    plt.savefig(ckp_path+'/'+filename+'.png')
     plt.close()
