@@ -6,12 +6,12 @@ import os
 import numpy as np
 import enum
 from pathlib import Path
-from utils import get_train_loader, get_test_loader, save_setting, plot_norm_losses, get_network, plot_embedding, plot_gradients
+from utils import get_train_loader, get_test_loader, save_setting, plot_norm_losses, get_network, plot_embedding, plot_gradients, evaluate
 from losses import norm_triangle, zero_loss
 
 SETTINGS = {
     'CHECKPOINT_ROOT': './checkpoint',
-    'STARTING_EPOCH': 50,
+    'STARTING_EPOCH': 40,
     'OTHER_EPOCHS': 20,
     'TIME_NOW': str(datetime.now().isoformat()),
     'SAVE_EVERY': 1,
@@ -80,10 +80,10 @@ def main():
         test_loader = get_test_loader(SETTINGS['DATASET'], accepted_class_labels=old_classes, batch_size=5*SETTINGS['BATCH_SIZE'])
 
         if iteration == 0:
-            EPOCH = SETTINGS['OTHER_EPOCHS']
+            EPOCH = SETTINGS['STARTING_EPOCH']
             lr = SETTINGS['STARTING_LEARNING_RATE']
         else:
-            EPOCH = SETTINGS['STARTING_EPOCH']
+            EPOCH = SETTINGS['OTHER_EPOCHS']
             lr = SETTINGS['OTHER_LEARNING_RATE']
 
         ce_optimizer = optim.SGD(params=net.parameters(), lr=lr, momentum=0.9)
@@ -198,20 +198,6 @@ class DummyLoss:
         self.val = 0.0
     def item(self):
         return self.val
-
-
-def evaluate(net, dataloader, label_correction):
-    net.eval()
-    correct = 0.0
-    with torch.no_grad():
-        for data in dataloader:
-            x, y, _, _, _, _, _ = data
-
-            outputs, _ = net(x.cuda())
-            _, preds = outputs.max(1)
-            correct += preds.eq((y-label_correction).cuda()).sum()
-
-    return correct.float() / len(dataloader.dataset)
 
 
 if __name__ == '__main__':

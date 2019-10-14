@@ -184,3 +184,26 @@ def plot_gradients(magnitudes, ckp_path, filename):
     sns.boxplot(x=np.asarray(range(y.shape[0])), y=y, palette=sns.color_palette("bright", len(magnitudes)))
     plt.savefig(ckp_path+'/'+filename+'.png')
     plt.close()
+
+
+def plot_accuracies(accuracies, filepath, filename):
+    os.makedirs(filepath, exist_ok=True)
+    sns.set_context(rc={"figure.figsize": (8, 4)})
+    fig = plt.bar([i for i in range(1, len(accuracies)+1)], accuracies, color=sns.color_palette("bright", len(accuracies)))
+    #plt.show()
+    plt.savefig(filepath+'/{}.png'.format(filename))
+    plt.close()
+
+
+def evaluate(net, dataloader, label_correction):
+    net.eval()
+    correct = 0.0
+    with torch.no_grad():
+        for data in dataloader:
+            x, y, _, _, _, _, _ = data
+
+            outputs, _ = net(x.cuda())
+            _, preds = outputs.max(1)
+            correct += preds.eq((y-label_correction).cuda()).sum()
+
+    return correct.float() / len(dataloader.dataset)
